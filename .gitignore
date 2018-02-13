@@ -6,3 +6,4 @@ __pycache__
 ._.*
 model.ckpt-*
 *.zip
+icnet_env/*
