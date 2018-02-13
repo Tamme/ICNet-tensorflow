@@ -2,21 +2,32 @@ import scipy.io as sio
 import numpy as np
 from PIL import Image
 import tensorflow as tf
+import time
+
+IMG_MEAN = np.array((103.939, 116.779, 123.68), dtype=np.float32)
 
 label_colours = [[128, 64, 128], [244, 35, 231], [69, 69, 69]
-                # 0 = road, 1 = sidewalk, 2 = building
+                # 0 = road(purple), 1 = sidewalk(pink), 2 = building(dark_gray)
                 ,[102, 102, 156], [190, 153, 153], [153, 153, 153]
-                # 3 = wall, 4 = fence, 5 = pole
+                # 3 = wall(olive_green), 4 = fence(gray_pink), 5 = pole (gray)
                 ,[250, 170, 29], [219, 219, 0], [106, 142, 35]
-                # 6 = traffic light, 7 = traffic sign, 8 = vegetation
+                # 6 = traffic light, 7 = traffic sign, 8 = vegetation (dark_green)
                 ,[152, 250, 152], [69, 129, 180], [219, 19, 60]
-                # 9 = terrain, 10 = sky, 11 = person
+                # 9 = terrain, 10 = sky (blue), 11 = person
                 ,[255, 0, 0], [0, 0, 142], [0, 0, 69]
                 # 12 = rider, 13 = car, 14 = truck
                 ,[0, 60, 100], [0, 79, 100], [0, 0, 230]
                 # 15 = bus, 16 = train, 17 = motocycle
                 ,[119, 10, 32]]
-                # 18 = bicycle
+                # 18 = bicycle [0, 0, 0] (black(void))
+label_colours = [[128, 64, 128], [69, 69, 69]
+                # 0 = 0 = road(purple), 1 = 2 = building(dark_gray)
+                , [106, 142, 35]
+                # 2 = 8 = vegetation (dark_green)
+                ,[152, 250, 152], [69, 129, 180]
+                # 3 = 9 = terrain, 4 = 10 = sky (blue)
+                ]
+                #  5 = [0, 0, 0] (black(void))
 
 matfn = './utils/color150.mat'
 def read_labelcolours(matfn):
@@ -31,7 +42,7 @@ def decode_labels(mask, img_shape, num_classes):
     if num_classes == 150:
         color_table = read_labelcolours(matfn)
     else:
-        color_table = label_colours
+        color_table = label_colours[:num_classes]
 
     color_mat = tf.constant(color_table, dtype=tf.float32)
     onehot_output = tf.one_hot(mask, depth=num_classes)
@@ -49,3 +60,37 @@ def prepare_label(input_batch, new_size, num_classes, one_hot=True):
             input_batch = tf.one_hot(input_batch, depth=num_classes)
             
     return input_batch
+
+def calculate_time(sess, net, pred, feed_dict):
+    start = time.time()
+    sess.run(net.layers['data'], feed_dict=feed_dict)
+    data_time = time.time() - start
+
+    start = time.time()
+    sess.run(pred, feed_dict=feed_dict)
+    total_time = time.time() - start
+
+    inference_time = total_time - data_time
+    return inference_time
+
+def preprocess(img, param):
+    # Convert RGB to BGR
+    img_r, img_g, img_b = tf.split(axis=2, num_or_size_splits=3, value=img)
+    img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.float32)
+    # Extract mean.
+    img -= IMG_MEAN
+
+    shape = param['input_size']
+
+    if param['name'] == 'cityscapes':
+        img = tf.image.pad_to_bounding_box(img, 0, 0, shape[0], shape[1])
+        img.set_shape([shape[0], shape[1], 3])
+        img = tf.expand_dims(img, axis=0)
+    elif param['name'] == 'ade20k':
+        img = tf.expand_dims(img, axis=0)
+        img = tf.image.resize_bilinear(img, shape, align_corners=True)
+    elif param['name'] == 'forest':
+        img = tf.expand_dims(img, axis=0)
+        img = tf.image.resize_bilinear(img, shape, align_corners=True)
+        
+    return img

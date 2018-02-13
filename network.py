@@ -60,14 +60,19 @@ class Network(object):
         '''Construct the network. '''
         raise NotImplementedError('Must be implemented by the subclass.')
 
-    def load(self, data_path, session, ignore_missing=False):
+    def load(self, data_path, session, num_classes, ignore_missing=False):
         '''Load network weights.
         data_path: The path to the numpy-serialized network weights
         session: The current TensorFlow session
+        num_classes: nr of classes for conv6_cls layer
         ignore_missing: If true, serialized weights for missing layers are ignored.
         '''
         data_dict = np.load(data_path, encoding='latin1').item()
+        print("DATA PATH", data_path)
         for op_name in data_dict:
+            print(op_name)
+            #if 'conv6_cls' not in op_name:
+            #    continue
             with tf.variable_scope(op_name, reuse=True):
                 for param_name, data in data_dict[op_name].items():
                     try:
@@ -75,10 +80,17 @@ class Network(object):
                             param_name = BN_param_map[param_name]
 
                         var = tf.get_variable(param_name)
-                        session.run(var.assign(data))
+                        if num_classes == 5:
+                            if 'conv6_cls' not in op_name:
+                                session.run(var.assign(data))
+                            else:
+                                session.run(var.assign(data[..., [0, 2, 8, 9, 10]]))
+                        else:
+                            session.run(var.assign(data))
                     except ValueError:
                         if not ignore_missing:
                             raise
+                
 
     def feed(self, *args):
         '''Set the input(s) for the next operation by replacing the terminal nodes.

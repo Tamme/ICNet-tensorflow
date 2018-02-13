@@ -3,7 +3,7 @@ from __future__ import print_function
 import argparse
 import os
 import sys
-import time
+import time, datetime
 from PIL import Image
 import tensorflow as tf
 import numpy as np
@@ -11,6 +11,7 @@ from scipy import misc
 
 from model import ICNet, ICNet_BN
 from tools import decode_labels
+
 
 IMG_MEAN = np.array((103.939, 116.779, 123.68), dtype=np.float32)
 # define setting & model configuration
@@ -21,13 +22,14 @@ model_paths = {'train': './model/icnet_cityscapes_train_30k.npy',
               'trainval': './model/icnet_cityscapes_trainval_90k.npy',
               'train_bn': './model/icnet_cityscapes_train_30k_bnnomerge.npy',
               'trainval_bn': './model/icnet_cityscapes_trainval_90k_bnnomerge.npy',
-              'others': './model/'}
+              'ade20k': './model/ade20k/',
+              'others': './snapshots_forest/'}
 
 # mapping different model
-model_config = {'train': ICNet, 'trainval': ICNet, 'train_bn': ICNet_BN, 'trainval_bn': ICNet_BN, 'others': ICNet_BN}
+model_config = {'train': ICNet, 'trainval': ICNet, 'train_bn': ICNet_BN, 'trainval_bn': ICNet_BN, 'ade20k': ICNet_BN, 'others': ICNet_BN}
 
 
-snapshot_dir = './snapshots'
+snapshot_dir = './snapshots_forest'
 
 SAVE_DIR = './output/'
 
@@ -38,7 +40,7 @@ def get_arguments():
                         required=True)
     parser.add_argument("--model", type=str, default='',
                         help="Model to use.",
-                        choices=['train', 'trainval', 'train_bn', 'trainval_bn', 'others'],
+                        choices=['train', 'trainval', 'train_bn', 'trainval_bn', 'others', 'ade20k'],
                         required=True)
     parser.add_argument("--save-dir", type=str, default=SAVE_DIR,
                         help="Path to save output.")
@@ -48,8 +50,9 @@ def get_arguments():
                         help="1 for using pruned model, while 2 for using non-pruned model.",
                         choices=[1, 2])
     parser.add_argument("--dataset", type=str, default='',
-                        choices=['ade20k', 'cityscapes'],
+                        choices=['ade20k', 'cityscapes', 'forest'],
                         required=True)
+    parser.add_argument("--gpu-nr", type=int, default=1, help="which gpu to use")
 
     return parser.parse_args()
 
@@ -67,15 +70,14 @@ def load(saver, sess, ckpt_path):
     print("Restored model parameters from {}".format(ckpt_path))
 
 def load_img(img_path):
-    if os.path.isfile(img_path):
-        print('successful load img: {0}'.format(img_path))
-    else:
+    if not os.path.isfile(img_path):
+        #print('successful load img: {0}'.format(img_path))
         print('not found file: {0}'.format(img_path))
         sys.exit(0)
 
     filename = img_path.split('/')[-1]
     img = misc.imread(img_path, mode='RGB')
-    print('input image shape: ', img.shape)
+    #print('input image shape: ', img.shape)
 
     return img, filename
 
@@ -109,12 +111,21 @@ def check_input(img):
 def main():
     args = get_arguments()
     
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_nr)
+    
+    
     if args.dataset == 'cityscapes':
         num_classes = cityscapes_class
+    elif args.dataset == "forest":
+        num_classes = 5
     else:
         num_classes = ADE20k_class
 
-    img, filename = load_img(args.img_path)
+    if not os.path.isdir(args.img_path):
+        img, filename = load_img(args.img_path)
+    else:
+        print("#lese")
+        img, filename = load_img(os.path.join(args.img_path, os.listdir(args.img_path)[0]))
     shape = img.shape[0:2]
 
     x = tf.placeholder(dtype=tf.float32, shape=img.shape)
@@ -143,7 +154,7 @@ def main():
     restore_var = tf.global_variables()
     
     model_path = model_paths[args.model]
-    if args.model == 'others':
+    if args.model == 'others' or args.model == 'ade20k':
         ckpt = tf.train.get_checkpoint_state(model_path)
         if ckpt and ckpt.model_checkpoint_path:
             loader = tf.train.Saver(var_list=tf.global_variables())
@@ -152,14 +163,25 @@ def main():
         else:
             print('No checkpoint file found.')
     else:
-        net.load(model_path, sess)
+        net.load(model_path, sess, num_classes)
         print('Restore from {}'.format(model_path))
-        
-    preds = sess.run(pred, feed_dict={x: img})
+    
+    if os.path.isdir(args.img_path):
+        timestamp = datetime.datetime.now()
+        for idx, img_name in enumerate(os.listdir(args.img_path)):
+            if ".jpg" in img_name or ".png" in img_name or ".jpeg" in img_name:
+                img, filename = load_img(os.path.join(args.img_path, img_name))
+                preds = sess.run(pred, feed_dict={x: img})
 
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
-    misc.imsave(args.save_dir + filename, preds[0])
+                if not os.path.exists(args.save_dir + str(timestamp)):
+                    os.makedirs(args.save_dir + str(timestamp))
+                misc.imsave(os.path.join(args.save_dir, str(timestamp), filename), preds[0])
+                print(img_name, idx)
+    else:        
+        preds = sess.run(pred, feed_dict={x: img})
+        if not os.path.exists(args.save_dir):
+            os.makedirs(args.save_dir)
+        misc.imsave(args.save_dir + filename, preds[0])
 
 if __name__ == '__main__':
     main()

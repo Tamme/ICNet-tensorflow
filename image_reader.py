@@ -83,7 +83,6 @@ def read_images_from_disk(input_queue, input_size, random_scale, random_mirror, 
 
         if random_scale:
             img, label = image_scaling(img, label)
-
         if random_mirror:
             img, label = image_mirroring(img, label)
 

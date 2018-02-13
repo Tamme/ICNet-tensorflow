@@ -6,19 +6,19 @@ import time
 import tensorflow as tf
 import numpy as np
 from tqdm import trange
+from scipy import misc
 
 from model import ICNet, ICNet_BN
 from image_reader import read_labeled_image_list
-
-IMG_MEAN = np.array((103.939, 116.779, 123.68), dtype=np.float32)
+from tools import decode_labels, preprocess, calculate_time
 
 # define setting & model configuration
 ADE20k_param = {'name': 'ade20k',
-                'input_size': [480, 480],
+                'input_size': [1000, 1000],
                 'num_classes': 150, # predict: [0~149] corresponding to label [1~150], ignore class 0 (background) 
                 'ignore_label': 0,
-                'num_steps': 2000,
-                'data_dir': '../../ADEChallengeData2016/', 
+                'num_steps': 200,
+                'data_dir': '../ADEChallengeData2016/', 
                 'data_list': './list/ade20k_val_list.txt'}
                 
 cityscapes_param = {'name': 'cityscapes',
@@ -29,33 +29,44 @@ cityscapes_param = {'name': 'cityscapes',
                     'data_dir': '/data/cityscapes_dataset/cityscape', 
                     'data_list': './list/cityscapes_val_list.txt'}
 
+                
+forest_param = {'name': 'forest',
+                    'input_size': [500, 500],
+                    'num_classes': 5,
+                    'ignore_label': 255,
+                    'num_steps': 132,
+                    'data_dir': '../Semantic-Segmentation-Suite/Forest', 
+                    'data_list': './list/forest_val_list.txt'}
+
 model_paths = {'train': './model/icnet_cityscapes_train_30k.npy', 
               'trainval': './model/icnet_cityscapes_trainval_90k.npy',
               'train_bn': './model/icnet_cityscapes_train_30k_bnnomerge.npy',
               'trainval_bn': './model/icnet_cityscapes_trainval_90k_bnnomerge.npy',
-              'others': './model/'}
+              'ade20k': './model/ade20k/',
+              'others': './snapshots_forest/'}
 
 # mapping different model
-model_config = {'train': ICNet, 'trainval': ICNet, 'train_bn': ICNet_BN, 'trainval_bn': ICNet_BN, 'others': ICNet_BN}
-
+model_config = {'train': ICNet, 'trainval': ICNet, 'train_bn': ICNet_BN, 'trainval_bn': ICNet_BN, 'ade20k': ICNet_BN, 'others': ICNet_BN}
+time_list = []
 
 def get_arguments():
     parser = argparse.ArgumentParser(description="Reproduced PSPNet")
 
-    parser.add_argument("--measure-time", action="store_true",
+    parser.add_argument("--measure-time", action="store_true", default=True,
                         help="whether to measure inference time")
     parser.add_argument("--model", type=str, default='',
                         help="Model to use.",
-                        choices=['train', 'trainval', 'train_bn', 'trainval_bn', 'others'],
+                        choices=['train', 'trainval', 'train_bn', 'trainval_bn', 'others', 'ade20k'],
                         required=True)
-    parser.add_argument("--flipped-eval", action="store_true",
+    parser.add_argument("--flipped-eval", action="store_true", default=False,
                         help="whether to evaluate with flipped img.")
     parser.add_argument("--dataset", type=str, default='',
-                        choices=['ade20k', 'cityscapes'],
+                        choices=['ade20k', 'cityscapes', 'forest'],
                         required=True)
     parser.add_argument("--filter-scale", type=int, default=1,
                         help="1 for using pruned model, while 2 for using non-pruned model.",
                         choices=[1, 2])
+    parser.add_argument("--gpu-nr", type=int, default=0, help="which gpu to use")
 
     return parser.parse_args()
 
@@ -63,56 +74,31 @@ def load(saver, sess, ckpt_path):
     saver.restore(sess, ckpt_path)
     print("Restored model parameters from {}".format(ckpt_path))
 
-time_list = []
-def calculate_time(sess, net, pred, feed_dict):
-    start = time.time()
-    sess.run(net.layers['data'], feed_dict=feed_dict)
-    data_time = time.time() - start
-
-    start = time.time()
-    sess.run(pred, feed_dict=feed_dict)
-    total_time = time.time() - start
-
-    inference_time = total_time - data_time
-
-    time_list.append(inference_time)
-    print('average inference time: {}'.format(np.mean(time_list)))
-
-def preprocess(img, param):
-    # Convert RGB to BGR
-    img_r, img_g, img_b = tf.split(axis=2, num_or_size_splits=3, value=img)
-    img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.float32)
-    # Extract mean.
-    img -= IMG_MEAN
-
-    shape = param['input_size']
-
-    if param['name'] == 'cityscapes':
-        img = tf.image.pad_to_bounding_box(img, 0, 0, shape[0], shape[1])
-        img.set_shape([shape[0], shape[1], 3])
-        img = tf.expand_dims(img, axis=0)
-    elif param['name'] == 'ade20k':
-        img = tf.expand_dims(img, axis=0)
-        img = tf.image.resize_bilinear(img, shape, align_corners=True)
-        
-    return img
-
 def main():
     args = get_arguments()
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_nr)
     
     if args.dataset == 'ade20k':
         param = ADE20k_param
     elif args.dataset == 'cityscapes':
         param = cityscapes_param
+    elif args.dataset == 'forest':
+        param = forest_param
 
     # Set placeholder
     image_filename = tf.placeholder(dtype=tf.string)
     anno_filename = tf.placeholder(dtype=tf.string)
 
+
     # Read & Decode image
     img = tf.image.decode_image(tf.read_file(image_filename), channels=3)
-    anno = tf.image.decode_image(tf.read_file(anno_filename), channels=1)
+    #shapey = tf.constant([0])#img.shape[0:2]
     img.set_shape([None, None, 3])
+    #if args.dataset == 'ade20k':
+    #    anno = tf.image.decode_image(tf.read_file(anno_filename), channels=3)
+    #    anno.set_shape([None, None, 3])
+    #else:
+    anno = tf.image.decode_image(tf.read_file(anno_filename), channels=1)
     anno.set_shape([None, None, 1])
 
     ori_shape = tf.shape(img)
@@ -123,7 +109,7 @@ def main():
                     filter_scale=args.filter_scale, evaluation=True)
 
     # Predictions.
-    raw_output = net.layers['conv6_cls']
+    raw_output = net.layers['conv6_cls'] #Tensor("conv6_cls/BiasAdd:0", shape=(1, 119, 119, 150), dtype=float32)
 
     raw_output_up = tf.image.resize_bilinear(raw_output, size=ori_shape[:2], align_corners=True)
     raw_output_up = tf.argmax(raw_output_up, axis=3)
@@ -138,25 +124,54 @@ def main():
     gt = tf.cast(tf.gather(raw_gt, indices), tf.int32)
     pred = tf.gather(pred_flatten, indices)
 
+    ## Predictions.
+    #raw_output_up = tf.image.resize_bilinear(raw_output, size=n_shape, align_corners=True)
+    #raw_output_up = tf.image.crop_to_bounding_box(raw_output_up, 0, 0, shape[0], shape[1])
+    #raw_output_up = tf.argmax(raw_output_up, axis=3)
+    full_img_pred =  decode_labels(raw_output_up, ori_shape[:2], param['num_classes'])
+    full_img_gt =  decode_labels(anno, ori_shape[:2], param['num_classes'])
+
+    #print(gt.shape)
     if args.dataset == 'ade20k':
         pred = tf.add(pred, tf.constant(1, dtype=tf.int64))
         mIoU, update_op = tf.contrib.metrics.streaming_mean_iou(pred, gt, num_classes=param['num_classes']+1)
     elif args.dataset == 'cityscapes':
         mIoU, update_op = tf.contrib.metrics.streaming_mean_iou(pred, gt, num_classes=param['num_classes'])
+    elif args.dataset == 'forest':
+        #pred = tf.add(pred, tf.constant(1, dtype=tf.int64))
+        mIoU, update_op = tf.contrib.metrics.streaming_mean_iou(pred, gt, num_classes=5)
+        acc = tf.metrics.accuracy(labels=gt, predictions=pred)
 
     # Set up tf session and initialize variables.
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
+    
+    #debug
+    #from tensorflow.python import debug as tf_debug
+    #sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+    
     init = tf.global_variables_initializer()
     local_init = tf.local_variables_initializer()
+
     
     sess.run(init)
     sess.run(local_init)
+    #anno_test = tf.image.decode_image(tf.read_file("../ADEChallengeData2016/annotations/validation/ADE_val_00000001.png"), channels=3).eval(session=sess)
+    #print("RAWWWWWWWW", raw_output_up)
+    #image_filename = "../ADEChallengeData2016/images/validation/ADE_val_00000001.jpg"
+    #print("RAWWWWWWWW", raw_pred.eval(session=sess))
+    #img_test = tf.image.decode_image(tf.read_file("../ADEChallengeData2016/images/validation/ADE_val_00000001.jpg"), channels=3).eval(session=sess)
+    #net2 = model({'data': img}, num_classes=param['num_classes'], 
+    #                filter_scale=args.filter_scale, evaluation=True).eval(session=sess)
+    #print("PRED", anno_test)
+    #print("NET", net.eval(session=sess))
 
     model_path = model_paths[args.model]
-    if args.model == 'others':
+    print("MODEL PATH", model_path)
+    if args.model == 'others' or args.model == 'ade20k':
         ckpt = tf.train.get_checkpoint_state(model_path)
+        print("CKPT", ckpt)
         if ckpt and ckpt.model_checkpoint_path:
             loader = tf.train.Saver(var_list=tf.global_variables())
             load_step = int(os.path.basename(ckpt.model_checkpoint_path).split('-')[1])
@@ -169,14 +184,30 @@ def main():
 
     img_files, anno_files = read_labeled_image_list(param['data_dir'], param['data_list'])
     for i in trange(param['num_steps'], desc='evaluation', leave=True):
+        #print("SHAPES", img_files[i], anno_files[i])
+        #import cv2
+        #img = cv2.imread(img_files[i], -1)
+        #ann = cv2.imread(anno_files[i], -1)
+        #print(img.shape, ann.shape)
         feed_dict = {image_filename: img_files[i], anno_filename: anno_files[i]}
-        _ = sess.run(update_op, feed_dict=feed_dict)
+        #_ = sess.run(update_op, feed_dict=feed_dict)
+        pred_o, gt_o, raw_gt_o, full_img_pred_o, full_img_gt_o, mIoU_o, acc_o, _ = sess.run([pred, gt, raw_gt, full_img_pred, full_img_gt, mIoU, acc, update_op], feed_dict=feed_dict)
+        #print("BBBBBBBBBBBBBB", ress.shape)
+        ##print(gt_o)
+        #print("SHAA", update_op)
+        #print("gt {} pred {} raw_gt {} -- {} {}".format(np.unique(gt_o), np.unique(pred_o), np.unique(raw_gt_o), pred_o.shape, gt_o.shape))
+        #print("IOU" , mIoU_o, "ACC", acc_o)
+        
 
         if i > 0 and args.measure_time:
-            calculate_time(sess, net, raw_pred, feed_dict)
+            inference_time = calculate_time(sess, net, raw_pred, feed_dict)
+            time_list.append(inference_time)
+            #print('average inference time: {}'.format(np.mean(time_list)))
 
     print('mIoU: {}'.format(sess.run(mIoU)))
-   
+    print(mIoU)
+    #init_new_vars_op = tf.initialize_variables([mIoU])
+    #sess.run(init_new_vars_op)
 
 if __name__ == '__main__':
     main()

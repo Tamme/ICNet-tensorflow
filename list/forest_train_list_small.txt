@@ -1,0 +1,10 @@
+train_static/b102-798_Clipped.jpg train_labels_icnet_static/b102-798_mask.png
+train_static/b161-308_Clipped.jpg train_labels_icnet_static/b161-308_mask.png
+train_static/b265-606_Clipped.jpg train_labels_icnet_static/b265-606_mask.png
+train_static/b40-2921_Clipped.jpg train_labels_icnet_static/b40-2921_mask.png
+train_static/b73-1482_Clipped.jpg train_labels_icnet_static/b73-1482_mask.png
+train_static/b103-494_Clipped.jpg train_labels_icnet_static/b103-494_mask.png
+train_static/b165-003_Clipped.jpg train_labels_icnet_static/b165-003_mask.png
+train_static/b269-993_Clipped.jpg train_labels_icnet_static/b269-993_mask.png
+train_static/b40-7064_Clipped.jpg train_labels_icnet_static/b40-7064_mask.png
+train_static/b73-2942_Clipped.jpg train_labels_icnet_static/b73-2942_mask.png

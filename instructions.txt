@@ -1,0 +1,10 @@
+python evaluate.py --model ade20k --dataset ade20k --filter-scale=2 --gpu-nr 1
+
+python inference.py --model ade20k --dataset ade20k --img-path=../Semantic-Segmentation-Suite/Forest/test/b2-05528_Clipped.jpg  --filter-scale=2 --gpu-nr 1
+python inference.py --model train --dataset cityscapes --img-path=../Semantic-Segmentation-Suite/Forest/test/b2-05528_Clipped.jpg --filter-scale=1 --gpu-nr 1
+
+python inference.py --model others --dataset forest --img-path=../Semantic-Segmentation-Suite/Forest/test/b2-05528_Clipped.jpg --filter-scale=1 --gpu-nr 0
+
+
+
+
